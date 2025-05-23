@@ -42,3 +42,13 @@ async def get_completed_stocks_count(user_id):
     async with async_session() as session:
          return await session.scalar(select(func.count(Stock.id)).where(Stock.completed == True))
     
+
+# Обновляет имя, фамилию и телефон пользователя по его ID
+async def update_user_info(user_id, first_name, last_name, phone):
+    async with async_session() as session:
+        await session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(first_name=first_name, last_name=last_name, phone=phone)
+        )
+        await session.commit()
