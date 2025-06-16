@@ -1,6 +1,7 @@
 from sqlalchemy import ForeignKey, String, BigInteger
 from sqlalchemy.orm import Mapped, DeclarativeBase, mapped_column
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import relationship
 
 
 engine = create_async_engine(url='sqlite+aiosqlite:///db.sqlite3', echo=True)
@@ -16,7 +17,9 @@ class User(Base):
     __tablename__ = 'users'
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tg_id = mapped_column(BigInteger)
+    tg_id = mapped_column(BigInteger, unique=True)
+    stocks = relationship("Stock", backref="owner", cascade="all, delete")
+
 
 
 class Stock(Base):

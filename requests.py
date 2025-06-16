@@ -36,19 +36,29 @@ async def get_stocks(user_id):
             StockSchema.model_validate(t).model_dump() for t in stocks
         ]
         return serialized_stocks
-    
+
+
+async def set_stock(user_id: int, filledSlots: int):
+    # Тут пишешь свою логику сохранения в БД / Google Sheets
+    # Например:
+    # UPDATE users SET filled_slots = filledSlots WHERE id = user_id
+    pass
+
+
+async def increment_stock(user_id: int):
+    # получаем текущее количество слотов
+    current_stock = await get_stocks(user_id)
+    filled_slots = current_stock.get('filledSlots', 0)
+
+    # увеличиваем на 1, максимум до 5
+    filled_slots = min(filled_slots + 1, 5)
+
+    # устанавливаем новое значение
+    await set_stock(user_id, filled_slots)
+
 
 async def get_completed_stocks_count(user_id):
     async with async_session() as session:
-         return await session.scalar(select(func.count(Stock.id)).where(Stock.completed == True))
-    
-
-# Обновляет имя, фамилию и телефон пользователя по его ID
-async def update_user_info(user_id, first_name, last_name, phone):
-    async with async_session() as session:
-        await session.execute(
-            update(User)
-            .where(User.id == user_id)
-            .values(first_name=first_name, last_name=last_name, phone=phone)
-        )
-        await session.commit()
+         return await session.scalar(
+    select(func.count(Stock.id)).where(Stock.completed == True, Stock.user == user_id)
+)
