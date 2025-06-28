@@ -31,30 +31,32 @@ async def get_stocks(user_id):
         stocks = await session.scalars(
             select(Stock).where(Stock.user == user_id, Stock.completed == False)
         )
-
-        serialized_stocks = [
-            StockSchema.model_validate(t).model_dump() for t in stocks
-        ]
-        return serialized_stocks
+        stocks_list = list(stocks)
+        return stocks_list
 
 
 async def set_stock(user_id: int, filledSlots: int):
-    # Тут пишешь свою логику сохранения в БД / Google Sheets
-    # Например:
-    # UPDATE users SET filled_slots = filledSlots WHERE id = user_id
-    pass
+    async with async_session() as session:
+        # Пометить все незавершённые слоты как завершённые
+        await session.execute(
+            update(Stock)
+            .where(Stock.user == user_id, Stock.completed == False)
+            .values(completed=True)
+        )
+        await session.commit()
 
 
 async def increment_stock(user_id: int):
-    # получаем текущее количество слотов
-    current_stock = await get_stocks(user_id)
-    filled_slots = current_stock.get('filledSlots', 0)
-
-    # увеличиваем на 1, максимум до 5
-    filled_slots = min(filled_slots + 1, 5)
-
-    # устанавливаем новое значение
-    await set_stock(user_id, filled_slots)
+    current_stock = await get_stocks(user_id)  # незавершённые слоты
+    if len(current_stock) >= 5:
+        # Обнуляем, даём бесплатный
+        await set_stock(user_id, 0)
+    else:
+        # Добавляем новый платный слот
+        async with async_session() as session:
+            new_slot = Stock(user=user_id, completed=False, title="Платный кальян")
+            session.add(new_slot)
+            await session.commit()
 
 
 async def get_completed_stocks_count(user_id):
@@ -62,3 +64,35 @@ async def get_completed_stocks_count(user_id):
          return await session.scalar(
     select(func.count(Stock.id)).where(Stock.completed == True, Stock.user == user_id)
 )
+
+
+# --- New functions ---
+async def get_free_hookah_count(user_id: int) -> int:
+    async with async_session() as session:
+        result = await session.execute(
+            select(func.count(Stock.id)).where(
+                Stock.user == user_id,
+                Stock.completed == True,
+                Stock.title == "Бесплатный кальян"
+            )
+        )
+        return result.scalar() or 0
+
+
+async def use_free_slot(user_id: int) -> bool:
+    async with async_session() as session:
+        result = await session.execute(
+            select(Stock)
+            .where(
+                Stock.user == user_id,
+                Stock.completed == True,
+                Stock.title == "Бесплатный кальян"
+            )
+            .limit(1)
+        )
+        free_slot = result.scalar_one_or_none()
+        if free_slot:
+            await session.delete(free_slot)
+            await session.commit()
+            return True
+        return False
