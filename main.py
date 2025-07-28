@@ -88,3 +88,17 @@ async def redeem(guest_tg_id: int, request: Request):
     guest = await rq.add_user(guest_tg_id)
     await rq.increment_stock(guest.id)
     return {"message": f"Слот добавлен пользователю {guest_tg_id}"}
+@app.post("/api/register")
+async def register_user(payload: RegisterPayload):
+    print("Регистрация пользователя:", payload.dict())
+
+    # Здесь можно добавить сохранение в БД, если нужно
+    return {
+        "success": True,
+        "user": {
+            "id": payload.tg_id,
+            "name": payload.firstName,
+            "surname": payload.lastName,
+            "phone": payload.phone,
+        }
+    }
