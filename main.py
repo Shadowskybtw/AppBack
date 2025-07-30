@@ -8,7 +8,7 @@ from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import init_db
-import requests as rq
+import services as rq
 
 from fastapi.responses import JSONResponse
 
