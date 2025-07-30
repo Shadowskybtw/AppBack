@@ -121,7 +121,7 @@ async def send_webapp_button(request: Request):
                 {
                     "text": "Открыть WebApp",
                     "web_app": {
-                        "url": webapp_url
+                        "url": "https://frontend-delta-sandy-58.vercel.app"
                     }
                 }
             ]]
