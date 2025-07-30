@@ -110,23 +110,28 @@ async def send_webapp_button(request: Request):
     if not chat_id:
         return JSONResponse(status_code=400, content={"error": "chat_id is required"})
 
-    token = "7829386579:AAGAUFZdd6PbuDtdEI1zxAkfY1vlj0Mu0WE"  # ЗАМЕНИ на свой настоящий токен бота
-    webapp_url = "https://frontend-delta-sandy-58.vercel.app"  # URL твоего WebApp на Vercel
+    token = "7829386579:AAGAUFZdd6PbuDtdEI1zxAkfY1vlj0Mu0WE"  # ЗАМЕНИ на свой токен
+    webapp_url = "https://frontend-delta-sandy-58.vercel.app"
 
     message_data = {
         "chat_id": chat_id,
-        "text": "Открой приложение 👇",
+        "text": "Нажмите кнопку ниже, чтобы открыть приложение:",
         "reply_markup": {
-            "keyboard": [[{
-                "text": "Открыть WebApp",
-                "web_app": {
-                    "url": webapp_url
+            "inline_keyboard": [[
+                {
+                    "text": "Открыть WebApp",
+                    "web_app": {
+                        "url": webapp_url
+                    }
                 }
-            }]],
-            "resize_keyboard": True,
-            "one_time_keyboard": True
+            ]]
         }
     }
 
     response = rq.post(f"https://api.telegram.org/bot{token}/sendMessage", json=message_data)
+    
+    if response.status_code != 200:
+        print("Ошибка Telegram API:", response.text)
+        return JSONResponse(status_code=response.status_code, content={"error": response.text})
+
     return {"status": "sent", "response": response.json()}
