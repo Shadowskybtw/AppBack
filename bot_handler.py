@@ -3,7 +3,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import requests
 import os
 
-BOT_TOKEN = os.getenv("7829386579:AAGAUFZdd6PbuDtdEI1zxAkfY1vlj0Mu0WE")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 BACKEND_URL = "https://refactored-cod-v6ww469vp657fwqpw-8000.app.github.dev/"  # Заменить на домен своего backend
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
