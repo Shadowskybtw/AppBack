@@ -103,12 +103,17 @@ async def register_user(payload: RegisterPayload):
         }
     }
 
-@app.get("/send_webapp_button/{chat_id}")
-def send_webapp_button(chat_id: int):
+@app.post("/send_webapp_button")
+async def send_webapp_button(request: Request):
+    data = await request.json()
+    chat_id = data.get("chat_id")
+    if not chat_id:
+        return JSONResponse(status_code=400, content={"error": "chat_id is required"})
+
     token = "7829386579:AAGAUFZdd6PbuDtdEI1zxAkfY1vlj0Mu0WE"  # ЗАМЕНИ на свой настоящий токен бота
     webapp_url = "https://frontend-delta-sandy-58.vercel.app"  # URL твоего WebApp на Vercel
 
-    data = {
+    message_data = {
         "chat_id": chat_id,
         "text": "Открой приложение 👇",
         "reply_markup": {
@@ -123,5 +128,5 @@ def send_webapp_button(chat_id: int):
         }
     }
 
-    response = rq.post(f"https://api.telegram.org/bot{token}/sendMessage", json=data)
+    response = rq.post(f"https://api.telegram.org/bot{token}/sendMessage", json=message_data)
     return {"status": "sent", "response": response.json()}
