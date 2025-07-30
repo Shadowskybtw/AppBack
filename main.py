@@ -102,3 +102,26 @@ async def register_user(payload: RegisterPayload):
             "phone": payload.phone,
         }
     }
+
+@app.get("/send_webapp_button/{chat_id}")
+def send_webapp_button(chat_id: int):
+    token = "7829386579:AAGAUFZdd6PbuDtdEI1zxAkfY1vlj0Mu0WE"  # ЗАМЕНИ на свой настоящий токен бота
+    webapp_url = "https://frontend-delta-sandy-58.vercel.app"  # URL твоего WebApp на Vercel
+
+    data = {
+        "chat_id": chat_id,
+        "text": "Открой приложение 👇",
+        "reply_markup": {
+            "keyboard": [[{
+                "text": "Открыть WebApp",
+                "web_app": {
+                    "url": webapp_url
+                }
+            }]],
+            "resize_keyboard": True,
+            "one_time_keyboard": True
+        }
+    }
+
+    response = rq.post(f"https://api.telegram.org/bot{token}/sendMessage", json=data)
+    return {"status": "sent", "response": response.json()}
