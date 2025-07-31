@@ -8,7 +8,7 @@ from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import init_db
-import rq as rq
+import requests as requests
 
 from fastapi.responses import JSONResponse
 
@@ -42,16 +42,16 @@ class RegisterPayload(BaseModel):
 @app.post("/api/stocks/{tg_id}")
 async def update_stock(tg_id: int, request: Request):
     body = await request.json()
-    user = await rq.add_user(tg_id)
+    user = await requests.add_user(tg_id)
 
     if body.get("incrementSlot"):
-        await rq.increment_stock(user.id)
+        await requests.increment_stock(user.id)
     elif "filledSlots" in body:
-        await rq.set_stock(user.id, body["filledSlots"])
+        await requests.set_stock(user.id, body["filledSlots"])
 
     # Отправка данных в Google Таблицу через Apps Script
     try:
-        rq.post(
+        requests.post(
             "https://script.google.com/macros/s/AKfycbx6Tl9msvSJFsYqr2ZSpZa0We5-pf_q5q0vr5g33tPU8huEX3Lrys97E0brARF8ahnJ/exec",  # ← замени на свой URL
             json={
                 "tg_id": tg_id,
@@ -65,13 +65,13 @@ async def update_stock(tg_id: int, request: Request):
     except Exception as e:
         print("Не удалось записать в Google Таблицу:", e)
 
-    return await rq.get_stocks(user.id)
+    return await requests.get_stocks(user.id)
  
 
 @app.get("/api/main/{tg_id}")
 async def profile(tg_id: int):
-    user = await rq.add_user(tg_id)
-    completed_stocks_count = await rq.get_completed_stocks_count(user.id)
+    user = await requests.add_user(tg_id)
+    completed_stocks_count = await requests.get_completed_stocks_count(user.id)
     return {'completedStocks': completed_stocks_count}
 
 
@@ -85,8 +85,8 @@ async def redeem(guest_tg_id: int, request: Request):
     if admin_tg_id not in ADMIN_IDS:
         return JSONResponse(status_code=403, content={"error": "Недостаточно прав"})
 
-    guest = await rq.add_user(guest_tg_id)
-    await rq.increment_stock(guest.id)
+    guest = await requests.add_user(guest_tg_id)
+    await requests.increment_stock(guest.id)
     return {"message": f"Слот добавлен пользователю {guest_tg_id}"}
 @app.post("/api/register")
 async def register_user(payload: RegisterPayload):
@@ -123,7 +123,7 @@ async def send_webapp_button(chat_id: int):
         }
     }
 
-    response = rq.post(f"https://api.telegram.org/bot{token}/sendMessage", json=message_data)
+    response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json=message_data)
     
     if response.status_code != 200:
         print("Ошибка Telegram API:", response.text)
