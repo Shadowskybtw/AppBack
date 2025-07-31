@@ -25,7 +25,7 @@ app = FastAPI(title="Stock App", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['https://frontend-delta-sandy-58.vercel.app'],
+    allow_origins=['*'],  # TEMP: Allow all origins for debugging
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
@@ -130,3 +130,11 @@ async def send_webapp_button(chat_id: int):
         return JSONResponse(status_code=response.status_code, content={"error": response.text})
 
     return {"status": "sent", "response": response.json()}
+@app.get("/api/stocks/{tg_id}")
+async def get_stock(tg_id: int):
+    user = await requests.add_user(tg_id)
+    stocks = await requests.get_stocks(user.id)
+    # Проверяем, что возвращается массив, иначе возвращаем пустой массив
+    if not isinstance(stocks, list):
+        return []
+    return stocks
