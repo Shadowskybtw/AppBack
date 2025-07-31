@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 from fastapi import FastAPI
+from fastapi.responses import Response
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -25,10 +26,10 @@ app = FastAPI(title="Stock App", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'],  # TEMP: Allow all origins for debugging
+    allow_origins=["https://frontend-delta-sandy-58.vercel.app"],
     allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -138,3 +139,7 @@ async def get_stock(tg_id: int):
     if not isinstance(stocks, list):
         return []
     return stocks
+
+@app.get("/api/hookahs/{tg_id}")
+async def get_hookahs(tg_id: int):
+    return []
