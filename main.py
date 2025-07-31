@@ -8,7 +8,7 @@ from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import init_db
-import rq as rq
+import requests as rq
 
 from fastapi.responses import JSONResponse
 
@@ -103,13 +103,8 @@ async def register_user(payload: RegisterPayload):
         }
     }
 
-@app.post("/send_webapp_button")
-async def send_webapp_button(request: Request):
-    data = await request.json()
-    chat_id = data.get("chat_id")
-    if not chat_id:
-        return JSONResponse(status_code=400, content={"error": "chat_id is required"})
-
+@app.post("/send_webapp_button/{chat_id}")
+async def send_webapp_button(chat_id: int):
     token = "7829386579:AAGAUFZdd6PbuDtdEI1zxAkfY1vlj0Mu0WE"  # ЗАМЕНИ на свой токен
     webapp_url = "https://frontend-delta-sandy-58.vercel.app"
 
@@ -121,7 +116,7 @@ async def send_webapp_button(request: Request):
                 {
                     "text": "Открыть WebApp",
                     "web_app": {
-                        "url": "https://frontend-delta-sandy-58.vercel.app"
+                        "url": webapp_url
                     }
                 }
             ]]
