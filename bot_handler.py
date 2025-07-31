@@ -1,6 +1,6 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import requests
+import requests_rq
 import os
 
 BOT_TOKEN = "7829386579:AAGAUFZdd6PbuDtdEI1zxAkfY1vlj0Mu0WE"
@@ -11,7 +11,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # Обращение к уже готовому эндпоинту FastAPI
-        response = requests.post(f"{BACKEND_URL}/send_webapp_button/{chat_id}")
+        response = requests_rq.post(f"{BACKEND_URL}/send_webapp_button/{chat_id}")
         print("Кнопка отправлена:", response.json())
     except Exception as e:
         print("Ошибка при отправке кнопки:", e)
