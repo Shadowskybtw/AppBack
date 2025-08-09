@@ -1,19 +1,17 @@
 from contextlib import asynccontextmanager
-
 from datetime import datetime
 
 from pydantic import BaseModel
-from fastapi import FastAPI
-from fastapi.responses import Response
-from fastapi import Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-
-from models import init_db
-import requests as requests
-
 from fastapi.responses import JSONResponse
 
- 
+from models import init_db, User, async_session
+from sqlalchemy import select
+
+import rq as requests
+
+
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     await init_db()
@@ -22,7 +20,6 @@ async def lifespan(app_: FastAPI):
 
 
 app = FastAPI(title="Stock App", lifespan=lifespan)
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,6 +40,9 @@ class RegisterPayload(BaseModel):
 @app.post("/api/stocks/{tg_id}")
 async def update_stock(tg_id: int, request: Request):
     body = await request.json()
+
+    # создаём пользователя только в явных действиях (инкремент/сет),
+    # а не в профиле
     user = await requests.add_user(tg_id)
 
     if body.get("incrementSlot"):
@@ -50,34 +50,53 @@ async def update_stock(tg_id: int, request: Request):
     elif "filledSlots" in body:
         await requests.set_stock(user.id, body["filledSlots"])
 
-    # Отправка данных в Google Таблицу через Apps Script
+    # Отправка данных в Google Таблицу через Apps Script (best-effort)
     try:
         requests.post(
-            "https://script.google.com/macros/s/AKfycbx6Tl9msvSJFsYqr2ZSpZa0We5-pf_q5q0vr5g33tPU8huEX3Lrys97E0brARF8ahnJ/exec",  # ← замени на свой URL
+            "https://script.google.com/macros/s/AKfycbx6Tl9msvSJFsYqr2ZSpZa0We5-pf_q5q0vr5g33tPU8huEX3Lrys97E0brARF8ahnJ/exec",
             json={
                 "tg_id": tg_id,
-                "username": user.username,
+                "username": getattr(user, "username", None),
                 "timestamp": datetime.now().isoformat(),
                 "action": "incrementSlot" if body.get("incrementSlot") else "setFilled",
-                "value": body.get("filledSlots", "")
+                "value": body.get("filledSlots", ""),
             },
-            timeout=2
+            timeout=2,
         )
     except Exception as e:
         print("Не удалось записать в Google Таблицу:", e)
 
     return await requests.get_stocks(user.id)
- 
+
 
 @app.get("/api/main/{tg_id}")
 async def profile(tg_id: int):
-    user = await requests.add_user(tg_id)
+    # ВНИМАНИЕ: здесь больше не создаём пользователя автоматически.
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+
+    if not user:
+        # Нет записи — фронт должен показать форму регистрации
+        return JSONResponse(status_code=404, content={"registered": False})
+
     completed_stocks_count = await requests.get_completed_stocks_count(user.id)
-    return {'completedStocks': completed_stocks_count}
+
+    return {
+        "registered": True,
+        "completedStocks": completed_stocks_count,
+        "user": {
+            "tg_id": user.tg_id,
+            "username": getattr(user, "username", None),
+            "firstName": getattr(user, "first_name", None),
+            "lastName": getattr(user, "last_name", None),
+            "phone": getattr(user, "phone", None),
+        },
+    }
 
 
 # список Telegram ID админов
 ADMIN_IDS = [123456789, 987654321]  # ← замени на настоящие TG ID админов
+
 
 @app.get("/redeem/{guest_tg_id}")
 async def redeem(guest_tg_id: int, request: Request):
@@ -89,6 +108,8 @@ async def redeem(guest_tg_id: int, request: Request):
     guest = await requests.add_user(guest_tg_id)
     await requests.increment_stock(guest.id)
     return {"message": f"Слот добавлен пользователю {guest_tg_id}"}
+
+
 @app.post("/api/register")
 async def register_user(payload: RegisterPayload):
     print("Регистрация пользователя:", payload.dict())
@@ -101,8 +122,9 @@ async def register_user(payload: RegisterPayload):
             "name": payload.firstName,
             "surname": payload.lastName,
             "phone": payload.phone,
-        }
+        },
     }
+
 
 @app.post("/send_webapp_button/{chat_id}")
 async def send_webapp_button(chat_id: int):
@@ -116,29 +138,30 @@ async def send_webapp_button(chat_id: int):
             "inline_keyboard": [[
                 {
                     "text": "Открыть WebApp",
-                    "web_app": {
-                        "url": webapp_url
-                    }
+                    "web_app": {"url": webapp_url},
                 }
             ]]
-        }
+        },
     }
 
     response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json=message_data)
-    
+
     if response.status_code != 200:
         print("Ошибка Telegram API:", response.text)
         return JSONResponse(status_code=response.status_code, content={"error": response.text})
 
     return {"status": "sent", "response": response.json()}
+
+
 @app.get("/api/stocks/{tg_id}")
 async def get_stock(tg_id: int):
     user = await requests.add_user(tg_id)
     stocks = await requests.get_stocks(user.id)
-    # Проверяем, что возвращается массив, иначе возвращаем пустой массив
+    # Гарантируем массив
     if not isinstance(stocks, list):
         return []
     return stocks
+
 
 @app.get("/api/hookahs/{tg_id}")
 async def get_hookahs(tg_id: int):
