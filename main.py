@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime
+import os
 
 from pydantic import BaseModel
 from fastapi import FastAPI, Request
@@ -9,7 +10,10 @@ from fastapi.responses import JSONResponse
 from models import init_db, User, async_session
 from sqlalchemy import select
 
-import rq as requests
+# Our DB/helpers module (previously requests.py -> renamed to rq.py)
+import rq
+# Real HTTP client for Telegram/Google requests
+import requests
 
 
 @asynccontextmanager
@@ -21,10 +25,13 @@ async def lifespan(app_: FastAPI):
 
 app = FastAPI(title="Stock App", lifespan=lifespan)
 
+# --- CORS ---
+# Codespaces URL меняется на каждом запуске, поэтому для разработки открываем CORS полностью.
+# На проде лучше ограничить доменами (или взять из переменной окружения).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://frontend-delta-sandy-58.vercel.app"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -37,18 +44,19 @@ class RegisterPayload(BaseModel):
     phone: str
 
 
+# --- STOCKS ---
+
 @app.post("/api/stocks/{tg_id}")
 async def update_stock(tg_id: int, request: Request):
     body = await request.json()
 
-    # создаём пользователя только в явных действиях (инкремент/сет),
-    # а не в профиле
-    user = await requests.add_user(tg_id)
+    # создаём пользователя только при явных действиях (инкремент/сет), а не в профиле
+    user = await rq.add_user(tg_id)
 
     if body.get("incrementSlot"):
-        await requests.increment_stock(user.id)
+        await rq.increment_stock(user.id)
     elif "filledSlots" in body:
-        await requests.set_stock(user.id, body["filledSlots"])
+        await rq.set_stock(user.id, body["filledSlots"])
 
     # Отправка данных в Google Таблицу через Apps Script (best-effort)
     try:
@@ -66,12 +74,24 @@ async def update_stock(tg_id: int, request: Request):
     except Exception as e:
         print("Не удалось записать в Google Таблицу:", e)
 
-    return await requests.get_stocks(user.id)
+    return await rq.get_stocks(user.id)
 
+
+@app.get("/api/stocks/{tg_id}")
+async def get_stock(tg_id: int):
+    user = await rq.add_user(tg_id)
+    stocks = await rq.get_stocks(user.id)
+    # Гарантируем массив
+    if not isinstance(stocks, list):
+        return []
+    return stocks
+
+
+# --- PROFILE ---
 
 @app.get("/api/main/{tg_id}")
 async def profile(tg_id: int):
-    # ВНИМАНИЕ: здесь больше не создаём пользователя автоматически.
+    # Не создаём пользователя автоматически.
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
 
@@ -79,7 +99,7 @@ async def profile(tg_id: int):
         # Нет записи — фронт должен показать форму регистрации
         return JSONResponse(status_code=404, content={"registered": False})
 
-    completed_stocks_count = await requests.get_completed_stocks_count(user.id)
+    completed_stocks_count = await rq.get_completed_stocks_count(user.id)
 
     return {
         "registered": True,
@@ -94,6 +114,8 @@ async def profile(tg_id: int):
     }
 
 
+# --- REDEEM (только админы) ---
+
 # список Telegram ID админов
 ADMIN_IDS = [123456789, 987654321]  # ← замени на настоящие TG ID админов
 
@@ -105,31 +127,58 @@ async def redeem(guest_tg_id: int, request: Request):
     if admin_tg_id not in ADMIN_IDS:
         return JSONResponse(status_code=403, content={"error": "Недостаточно прав"})
 
-    guest = await requests.add_user(guest_tg_id)
-    await requests.increment_stock(guest.id)
+    guest = await rq.add_user(guest_tg_id)
+    await rq.increment_stock(guest.id)
     return {"message": f"Слот добавлен пользователю {guest_tg_id}"}
 
 
+# --- REGISTER ---
+
 @app.post("/api/register")
 async def register_user(payload: RegisterPayload):
+    """
+    Создаёт (если нужно) и обновляет пользователя в БД,
+    затем возвращает унифицированный объект user.
+    """
     print("Регистрация пользователя:", payload.dict())
 
-    # Здесь можно добавить сохранение в БД, если нужно
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == payload.tg_id))
+
+        if not user:
+            user = User(
+                tg_id=payload.tg_id,
+                first_name=payload.firstName,
+                last_name=payload.lastName,
+                phone=payload.phone,
+            )
+            session.add(user)
+        else:
+            user.first_name = payload.firstName
+            user.last_name = payload.lastName
+            user.phone = payload.phone
+
+        await session.commit()
+        await session.refresh(user)
+
     return {
         "success": True,
         "user": {
-            "id": payload.tg_id,
-            "name": payload.firstName,
-            "surname": payload.lastName,
-            "phone": payload.phone,
+            "tg_id": user.tg_id,
+            "username": getattr(user, "username", None),
+            "firstName": getattr(user, "first_name", None),
+            "lastName": getattr(user, "last_name", None),
+            "phone": getattr(user, "phone", None),
         },
     }
 
 
+# --- TELEGRAM WEBAPP BUTTON ---
+
 @app.post("/send_webapp_button/{chat_id}")
 async def send_webapp_button(chat_id: int):
-    token = "7829386579:AAGAUFZdd6PbuDtdEI1zxAkfY1vlj0Mu0WE"  # ЗАМЕНИ на свой токен
-    webapp_url = "https://frontend-delta-sandy-58.vercel.app"
+    token = os.getenv("BOT_TOKEN", "7829386579:AAGAUFZdd6PbuDtdEI1zxAkfY1vlj0Mu0WE")  # ЗАМЕНИ на свой токен/переменную
+    webapp_url = os.getenv("WEBAPP_URL", "https://frontend-delta-sandy-58.vercel.app")
 
     message_data = {
         "chat_id": chat_id,
@@ -153,15 +202,7 @@ async def send_webapp_button(chat_id: int):
     return {"status": "sent", "response": response.json()}
 
 
-@app.get("/api/stocks/{tg_id}")
-async def get_stock(tg_id: int):
-    user = await requests.add_user(tg_id)
-    stocks = await requests.get_stocks(user.id)
-    # Гарантируем массив
-    if not isinstance(stocks, list):
-        return []
-    return stocks
-
+# --- HOOKAHS (заглушка пока пустая) ---
 
 @app.get("/api/hookahs/{tg_id}")
 async def get_hookahs(tg_id: int):
