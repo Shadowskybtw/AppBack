@@ -51,13 +51,37 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware - разрешаем все домены для WebApp
+
+# --- CORS ---
+# Разрешаем запросы с фронтенда на Vercel, из Telegram Web и публичных Codespaces (*.app.github.dev).
+DEFAULT_ORIGINS = [
+    "https://frontend-delta-sandy-58.vercel.app",
+    "https://web.telegram.org",
+    "https://telegram.org",
+    "https://t.me",
+]
+
+# Дополнительные домены можно передать через settings.CORS_ORIGINS (строка с доменами через запятую)
+extra = []
+try:
+    if getattr(settings, "CORS_ORIGINS", None):
+        extra = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+except Exception:
+    extra = []
+
+ALLOWED_ORIGINS = list(dict.fromkeys(DEFAULT_ORIGINS + extra))
+
+# Любой публичный домен Codespaces вроде https://<name>-8000.app.github.dev
+CODESPACES_REGEX = r"https://.*\.app\.github\.dev$"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Разрешаем все домены для WebApp
-    allow_credentials=False,  # Без credentials безопаснее и совместимо со звёздочкой
-    allow_methods=["*"],
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else ["*"],
+    allow_origin_regex=CODESPACES_REGEX,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 
