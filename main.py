@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 import logging
 from typing import List
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from fastapi import FastAPI, Request, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,7 +55,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Разрешаем все домены для WebApp
-    allow_credentials=True,  # Разрешаем credentials для WebApp
+    allow_credentials=False,  # Без credentials безопаснее и совместимо со звёздочкой
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -216,73 +218,162 @@ async def get_profile(tg_id: int):
         )
 
 
+@app.get("/api/free-hookahs/{tg_id}")
+async def get_free_hookahs(tg_id: int):
+    """Return number of available free hookahs for a user."""
+    try:
+        user = await add_user(tg_id)
+        _, _total, _completed, available = await get_stocks_summary(user.id)
+        return {"count": int(available) if available is not None else 0}
+    except DatabaseError as e:
+        logger.error(f"Database error in get_free_hookahs: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error occurred")
+
+
 # --- REGISTRATION ENDPOINT ---
 
 @app.post("/api/register", response_model=RegisterResponse)
-async def register_user(payload: RegisterPayload):
-    """Register or update user"""
+async def register_user(payload: RegisterPayload | None = None, request: Request = None):
+    """Register or update user (idempotent). Accepts both snake_case and camelCase keys.
+    Frontend may send {tg_id, firstName, lastName, phone, username} or snake_case.
+    """
     try:
-        logger.info(f"Registration request for user: {payload.tg_id}")
-        
-        # Update or create user profile
-        user = await update_user_profile(
-            tg_id=payload.tg_id,
-            first_name=payload.first_name,
-            last_name=payload.last_name,
-            phone=payload.phone,
-            username=payload.username
-        )
-        
-        return RegisterResponse(success=True, user=user)
-        
-    except BusinessLogicError as e:
-        logger.warning(f"Business logic error in registration: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        body = None
+        if request is not None:
+            try:
+                body = await request.json()
+            except Exception:
+                body = None
+
+        # Prefer explicit Pydantic payload if parsed, otherwise normalize raw body
+        if payload is None and isinstance(body, dict):
+            # normalize keys
+            def pick(d, *names):
+                for n in names:
+                    if n in d and d[n] not in (None, ""):
+                        return d[n]
+                return None
+
+            tg_id_val = pick(body, "tg_id", "telegram_id", "id", "tgId")
+            first_name = pick(body, "first_name", "firstName") or ""
+            last_name  = pick(body, "last_name", "lastName") or ""
+            phone      = pick(body, "phone", "telephone", "tel") or ""
+            username   = pick(body, "username", "userName")
+
+            try:
+                tg_id_int = int(tg_id_val)
+            except Exception:
+                tg_id_int = None
+
+            if not tg_id_int:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="tg_id is required")
+            if not isinstance(phone, str) or len(phone.strip()) < 5:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="phone is invalid")
+
+            # Manual upsert using SQLAlchemy session to avoid hidden integrity errors
+            async with async_session() as session:
+                user = await session.scalar(select(User).where(User.tg_id == tg_id_int))
+
+                # Phone conflict with another user
+                if phone:
+                    owner = await session.scalar(select(User).where(User.phone == phone))
+                    if owner and (not user or owner.id != user.id):
+                        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already in use")
+
+                if user:
+                    user.first_name = first_name
+                    user.last_name  = last_name
+                    user.phone      = phone
+                    user.username   = username
+                else:
+                    user = User(
+                        tg_id=tg_id_int,
+                        first_name=first_name,
+                        last_name=last_name,
+                        phone=phone,
+                        username=username,
+                    )
+                    session.add(user)
+
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    await session.rollback()
+                    logger.exception("Integrity error in /api/register")
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User/phone already exists")
+
+            # success
+            return RegisterResponse(success=True, user=user)
+
+        # If we have a validated Pydantic payload (snake_case), use existing DAL helper
+        if payload is not None:
+            logger.info(f"Registration request for user: {payload.tg_id}")
+            try:
+                # Extra pre-check for phone conflicts to convert to 409 instead of 500
+                async with async_session() as session:
+                    existing_by_tg = await session.scalar(select(User).where(User.tg_id == payload.tg_id))
+                    if payload.phone:
+                        owner = await session.scalar(select(User).where(User.phone == payload.phone))
+                        if owner and (not existing_by_tg or owner.id != existing_by_tg.id):
+                            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already in use")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.warning(f"Pre-check error before update_user_profile: {e}")
+
+            user = await update_user_profile(
+                tg_id=payload.tg_id,
+                first_name=payload.first_name,
+                last_name=payload.last_name,
+                phone=payload.phone,
+                username=payload.username,
+            )
+            return RegisterResponse(success=True, user=user)
+
+        # No payload, no body
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid register payload")
+
+    except HTTPException:
+        raise
     except DatabaseError as e:
         logger.error(f"Database error in registration: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error occurred"
+            detail="Database error occurred",
         )
+    except Exception as e:
+        logger.error(f"Unexpected error in registration: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal registration error")
 
 
 # --- ADMIN ENDPOINTS ---
 
-@app.get("/redeem/{guest_tg_id}", response_model=SuccessResponse)
-async def redeem(guest_tg_id: int, request: Request):
-    """Admin endpoint to add free slot for guest"""
-    admin_tg_id = int(request.headers.get("X-Telegram-ID", 0))
-    
+async def _redeem_core(guest_tg_id: int, admin_tg_id: int):
     if not settings.ADMIN_IDS:
         logger.warning("No admin IDs configured")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Admin system not configured"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Admin system not configured")
     if admin_tg_id not in settings.ADMIN_IDS:
         logger.warning(f"Unauthorized admin access attempt: {admin_tg_id}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
     try:
         guest = await add_user(guest_tg_id)
         await increment_stock(guest.id)
-        
         logger.info(f"Admin {admin_tg_id} added slot for guest {guest_tg_id}")
         return SuccessResponse(message=f"Slot added for user {guest_tg_id}")
-        
     except DatabaseError as e:
         logger.error(f"Database error in redeem: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error occurred"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error occurred")
+
+@app.get("/redeem/{guest_tg_id}", response_model=SuccessResponse)
+async def redeem_get(guest_tg_id: int, request: Request):
+    admin_tg_id = int(request.headers.get("X-Telegram-ID", 0))
+    return await _redeem_core(guest_tg_id, admin_tg_id)
+
+@app.post("/redeem/{guest_tg_id}", response_model=SuccessResponse)
+async def redeem_post(guest_tg_id: int, request: Request):
+    admin_tg_id = int(request.headers.get("X-Telegram-ID", 0))
+    return await _redeem_core(guest_tg_id, admin_tg_id)
 
 
 # --- TELEGRAM INTEGRATION ---
@@ -398,8 +489,8 @@ async def webapp_init(tg_id: int):
             "user": {
                 "tg_id": user.tg_id,
                 "username": getattr(user, "username", None),
-                "firstName": getattr(user, "first_name", None),
-                "lastName": getattr(user, "last_name", None),
+                "first_name": getattr(user, "first_name", None),
+                "last_name": getattr(user, "last_name", None),
                 "phone": getattr(user, "phone", None),
             }
         }
