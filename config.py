@@ -18,13 +18,16 @@ class Settings(BaseSettings):
     # Admin IDs (comma-separated string from env)
     ADMIN_IDS: List[int] = []
     
-    # CORS
+    # CORS - для GitHub Codespaces разрешаем все домены
     ALLOWED_ORIGINS: List[str] = ["*"]
     
     # App settings
     MAX_STOCKS_PER_USER: int = 5
     FREE_HOOKAH_TITLE: str = "Бесплатный кальян"
     PAID_HOOKAH_TITLE: str = "Платный кальян"
+    
+    # WebApp settings
+    WEBAPP_DOMAIN: str = "frontend-delta-sandy-58.vercel.app"
     
     class Config:
         env_file = ".env"
@@ -40,6 +43,12 @@ class Settings(BaseSettings):
             except ValueError:
                 print("Warning: Invalid ADMIN_IDS format. Expected comma-separated integers.")
                 self.ADMIN_IDS = []
+        
+        # Auto-detect backend URL for GitHub Codespaces
+        if "github.dev" in os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", ""):
+            self.BACKEND_URL = f"https://{os.getenv('GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN')}"
+        elif "CODESPACE_NAME" in os.environ:
+            self.BACKEND_URL = f"https://{os.getenv('CODESPACE_NAME')}-{os.getenv('GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN', '8000.app.github.dev')}"
 
 
 # Global settings instance

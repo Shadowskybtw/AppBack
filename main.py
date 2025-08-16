@@ -49,11 +49,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware
+# CORS middleware - разрешаем все домены для WebApp
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=False,
+    allow_origins=["*"],  # Разрешаем все домены для WebApp
+    allow_credentials=True,  # Разрешаем credentials для WebApp
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -193,7 +193,7 @@ async def get_stock(tg_id: int):
 
 @app.get("/api/main/{tg_id}", response_model=ProfileResponse)
 async def get_profile(tg_id: int):
-    """Get user profile"""
+    """Get user profile - НЕ создает пользователя автоматически"""
     try:
         user = await get_user_by_tg_id(tg_id)
         
@@ -375,6 +375,42 @@ async def send_to_google_sheets(tg_id: int, user: User, action: str, value: str)
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+
+# --- WEBAPP INIT ENDPOINT ---
+
+@app.get("/api/webapp/init/{tg_id}")
+async def webapp_init(tg_id: int):
+    """Initialize WebApp session - проверяет существование пользователя"""
+    try:
+        user = await get_user_by_tg_id(tg_id)
+        
+        if not user:
+            return {
+                "initialized": False,
+                "userExists": False,
+                "message": "User not found"
+            }
+        
+        return {
+            "initialized": True,
+            "userExists": True,
+            "user": {
+                "tg_id": user.tg_id,
+                "username": getattr(user, "username", None),
+                "firstName": getattr(user, "first_name", None),
+                "lastName": getattr(user, "last_name", None),
+                "phone": getattr(user, "phone", None),
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in webapp_init: {e}")
+        return {
+            "initialized": False,
+            "userExists": False,
+            "message": "Error occurred"
+        }
 
 
 if __name__ == "__main__":

@@ -153,13 +153,9 @@ async def get_completed_stocks_count(user_id: int) -> int:
     """Get count of completed stocks for user"""
     try:
         async with async_session() as session:
-            result = await session.scalar(
-                select(func.count(Stock.id)).where(
-                    Stock.user_id == user_id,
-                    Stock.completed == True
-                )
-            )
-            return result or 0
+             return await session.scalar(
+        select(func.count(Stock.id)).where(Stock.completed == True, Stock.user_id == user_id)
+    )
     except SQLAlchemyError as e:
         logger.error(f"Database error while getting completed stocks count for user {user_id}: {e}")
         raise DatabaseError(f"Failed to get completed stocks count: {e}")
@@ -215,26 +211,58 @@ async def update_user_profile(
     phone: str = None,
     username: str = None
 ) -> User:
-    """Update user profile information"""
+    """Update user profile information or create new user"""
     try:
         async with async_session() as session:
             user = await session.scalar(select(User).where(User.tg_id == tg_id))
-            if not user:
-                raise BusinessLogicError(f"User with tg_id {tg_id} not found")
             
-            if first_name is not None:
-                user.first_name = first_name
-            if last_name is not None:
-                user.last_name = last_name
-            if phone is not None:
-                user.phone = phone
-            if username is not None:
-                user.username = username
+            if not user:
+                # Create new user with provided data
+                user = User(
+                    tg_id=tg_id,
+                    first_name=first_name,
+                    last_name=last_name,
+                    phone=phone,
+                    username=username
+                )
+                session.add(user)
+                logger.info(f"Created new user with tg_id: {tg_id}")
+            else:
+                # Update existing user
+                if first_name is not None:
+                    user.first_name = first_name
+                if last_name is not None:
+                    user.last_name = last_name
+                if phone is not None:
+                    user.phone = phone
+                if username is not None:
+                    user.username = username
+                logger.info(f"Updated profile for user {tg_id}")
             
             await session.commit()
             await session.refresh(user)
-            logger.info(f"Updated profile for user {tg_id}")
             return user
+            
     except SQLAlchemyError as e:
         logger.error(f"Database error while updating user profile {tg_id}: {e}")
         raise DatabaseError(f"Failed to update user profile: {e}")
+
+
+async def create_user_if_not_exists(tg_id: int) -> User:
+    """Create user if doesn't exist, return existing if does"""
+    try:
+        async with async_session() as session:
+            user = await session.scalar(select(User).where(User.tg_id == tg_id))
+            
+            if not user:
+                user = User(tg_id=tg_id)
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
+                logger.info(f"Created new user with tg_id: {tg_id}")
+            
+            return user
+            
+    except SQLAlchemyError as e:
+        logger.error(f"Database error while creating user {tg_id}: {e}")
+        raise DatabaseError(f"Failed to create user: {e}")
